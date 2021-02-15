@@ -1,9 +1,67 @@
-#[derive(Debug)]
+use std::fmt;
+
+/// This is just a helper type for denoting what type of error has occured when unpacking a file 
+/// 
+/// # Examples
+/// 
+/// * The file size is less than the minimum valid size 
+/// `RegionParseError::FileSizeErr(file_length, minimum_length)`
+/// * An encountered chunk has an end point beyond the end of the file 
+/// `ChunkParseErr(chunk_number, file_length, chunk_end)`
+/// 
+/// `fmt::Debug` has been implemented for this so that error can be displayed directly to the console
+/// 
+/// ```
+/// use anvil_lib::raw::get_region_raw;
+/// 
+/// let file: Vec<u8> = Vec::new();
+/// match get_region_raw(&file) { // returns Result<Vec<(Vec<u8>, u8)>, RegionParseError>
+///     Ok(_) => (),
+///     Err(error) => println!("{:?}", error)
+/// }
+/// ```
 pub enum RegionParseError {
-    FileSizeErr,
-    ChunkParseErr(usize) // Holds which chunk has errored 
+    FileSizeErr(usize, usize), // (file_length, minimum_length)
+    ChunkParseErr(usize, usize, usize) // (chunk_no, file_length, chunk_end) 
+}
+impl fmt::Debug for RegionParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RegionParseError::FileSizeErr(file_size, min_file_size) => 
+                f.write_fmt(format_args!("The supplied file is smaller than the minimum size, minimum size: {}; size: {};",
+                    file_size, min_file_size)),
+            RegionParseError::ChunkParseErr(chunk_no, file_length, chunk_end) => 
+                f.write_fmt(format_args!("The chunk end is beyond the end of the end of the file, chunk No: {}; file size: {}; chunk end: {};",
+                    chunk_no, file_length, chunk_end)),
+        }
+    }
 }
 
+/// This function will take an anvil format file (`.mca`) in a slice of bytes (`u8`) and attempts to 
+/// parse it into a vector of tuples, that contains the exctracted chunk (in order of how they appear 
+/// in the files posistion table) and the compression scheme. Where item 0 is a vector of `u8` 
+/// containing the uncompressed chunk and the second item is a u8 and denotes the compression scheme. 
+/// 
+/// A compression scheme of 1 is gzip, and 2 is zlib. A scheme of 0 or anything else indicates that the
+/// chunk has not been generated yet and the chunk will be a blank vector. 
+/// 
+/// If an error is found in the structure of the file that can not be recovered, the function
+/// will return an `Err(RegionParseErr)`, a enum denoting whether the error is with the file as a
+/// whole or an individual chunk.
+/// 
+/// # Examples
+/// ```
+/// use std::fs;
+/// use anvil_lib::raw::get_region_raw;
+/// 
+/// fn main() {
+///     let file = fs::read("data/test.bin").expect("Failed to open file.");
+///     let mut raw_region = match get_region_raw(&file) {
+///         Ok(val) => val,
+///         Err(error) => panic!("{:?}", error) // fmt debug is implemented for RegionParseError
+///     };
+/// }
+/// ```
 pub fn get_region_raw(file: &[u8]) -> Result<Vec<(Vec<u8>, u8)>, RegionParseError> {
     // Stores the data itself and the compression scheme for each chunk (data, compression_scheme) 
     let mut output: Vec<(Vec<u8>, u8)> = Vec::new(); 
@@ -25,7 +83,7 @@ pub fn get_region_raw(file: &[u8]) -> Result<Vec<(Vec<u8>, u8)>, RegionParseErro
     */
 
     // Make sure that the file is definitely above 8192 bytes (both the fixed sized tables) 
-    if file.len() < 8192 { return Err(RegionParseError::FileSizeErr) } 
+    if file.len() < 8192 { return Err(RegionParseError::FileSizeErr(file.len(), 8192)) } 
 
     // Iterate over the 1024 entries 
     for iter in 0..1024 {
@@ -53,7 +111,9 @@ pub fn get_region_raw(file: &[u8]) -> Result<Vec<(Vec<u8>, u8)>, RegionParseErro
 
             // If the file length is shorter than the start posistion + rough end posistion 
             // return an error and indicate which chunk errored 
-            if file.len() < entry_pos + rough_size { return Err(RegionParseError::ChunkParseErr(iter)) } 
+            if file.len() < entry_pos + rough_size { 
+                return Err(RegionParseError::ChunkParseErr(iter, file.len(), entry_pos + rough_size)) 
+            } 
 
             // Converts the 4 bytes, largest to smallest into a single number 
             let fourth_byte = (file[entry_pos] as usize) << 24; 
