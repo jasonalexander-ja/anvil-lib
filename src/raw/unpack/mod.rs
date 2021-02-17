@@ -1,53 +1,21 @@
-use std::fmt;
+mod unpack_errors;
+pub use unpack_errors::*;
 
-/// This is just a helper type for denoting what type of error has occured when unpacking a file 
+/// This function will take a slice of bytes (`u8`), check to ensure that it is in the anvil file format,
+/// and extracts each uncompressed chunk as a vector of bytes, with the corresponsing compression scheme. 
 /// 
-/// # Examples
+/// It does not check for valid chunk compression, it will only check that both the fixed size 4096 byte
+/// tables are present and makes sure that there is data in the places specified by the posistion table
+/// and chunk header, else it will return a `Err(RegionParseErr)` detailing the error. 
 /// 
-/// * The file size is less than the minimum valid size 
-/// `RegionParseError::FileSizeErr(file_length, minimum_length)`
-/// * An encountered chunk has an end point beyond the end of the file 
-/// `ChunkParseErr(chunk_number, file_length, chunk_end)`
+/// If a valid anvil format is detected and parsed correctly, a type `Ok(Vec<(Vec<u8>, u8)>)` will be returned, 
+/// this is a vector of tuples containing the uncompressed chunk as a vector of bytes (item 0) 
+/// and the compression scheme for the chunk as a byte (item 1), the data for each chunk appears in 
+/// the vector in the same order as what it appears in the posistion table in the file. 
 /// 
-/// `fmt::Debug` has been implemented for this so that error can be displayed directly to the console
-/// 
-/// ```
-/// use anvil_lib::raw::get_region_raw;
-/// 
-/// let file: Vec<u8> = Vec::new();
-/// match get_region_raw(&file) { // returns Result<Vec<(Vec<u8>, u8)>, RegionParseError>
-///     Ok(_) => (),
-///     Err(error) => println!("{:?}", error)
-/// }
-/// ```
-pub enum RegionParseError {
-    FileSizeErr(usize, usize), // (file_length, minimum_length)
-    ChunkParseErr(usize, usize, usize) // (chunk_no, file_length, chunk_end) 
-}
-impl fmt::Debug for RegionParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RegionParseError::FileSizeErr(file_size, min_file_size) => 
-                f.write_fmt(format_args!("The supplied file is smaller than the minimum size, minimum size: {}; size: {};",
-                    file_size, min_file_size)),
-            RegionParseError::ChunkParseErr(chunk_no, file_length, chunk_end) => 
-                f.write_fmt(format_args!("The chunk end is beyond the end of the end of the file, chunk No: {}; file size: {}; chunk end: {};",
-                    chunk_no, file_length, chunk_end)),
-        }
-    }
-}
-
-/// This function will take an anvil format file (`.mca`) in a slice of bytes (`u8`) and attempts to 
-/// parse it into a vector of tuples, that contains the exctracted chunk (in order of how they appear 
-/// in the files posistion table) and the compression scheme. Where item 0 is a vector of `u8` 
-/// containing the uncompressed chunk and the second item is a u8 and denotes the compression scheme. 
-/// 
-/// A compression scheme of 1 is gzip, and 2 is zlib. A scheme of 0 or anything else indicates that the
-/// chunk has not been generated yet and the chunk will be a blank vector. 
-/// 
-/// If an error is found in the structure of the file that can not be recovered, the function
-/// will return an `Err(RegionParseErr)`, a enum denoting whether the error is with the file as a
-/// whole or an individual chunk.
+/// The compresseion scheme will either be `1` for gzip, or `2` for zlib, if the chunk has not been created 
+/// then the compression scheme will be 0 and the vector will be empty, anything else must be treated as 
+/// corrupt data. 
 /// 
 /// # Examples
 /// ```
@@ -62,6 +30,23 @@ impl fmt::Debug for RegionParseError {
 ///     };
 /// }
 /// ```
+/// 
+/// # Errors
+///  
+/// * If the 2 fixed size 4096 byte tables are not present (if the given slice is less than 2 * 4096 = 8192 bytes); Returns: 
+///     
+///     `Err(RegionParseError::FileSizeErr(file_length, minimum_length))`
+/// 
+/// * If the maximum posistion for a chunk indicated in the posistion table (the first 4096 byte table) is 
+/// larger than the length of the slice; Returns: 
+/// 
+///     `Err(ChunkParseErr(chunk_number, file_length, chunk_end))`
+/// 
+/// * If the chunk length indicated by the chunk header is larger than the maximum langth indicated by the 
+/// posistion table; Returns: 
+/// 
+///     `Err(RegionParseError::ChunkHeaderErr(chunk_number, max_length, indicated_length))`
+/// 
 pub fn get_region_raw(file: &[u8]) -> Result<Vec<(Vec<u8>, u8)>, RegionParseError> {
     // Stores the data itself and the compression scheme for each chunk (data, compression_scheme) 
     let mut output: Vec<(Vec<u8>, u8)> = Vec::new(); 
@@ -86,7 +71,7 @@ pub fn get_region_raw(file: &[u8]) -> Result<Vec<(Vec<u8>, u8)>, RegionParseErro
     if file.len() < 8192 { return Err(RegionParseError::FileSizeErr(file.len(), 8192)) } 
 
     // Iterate over the 1024 entries 
-    for iter in 0..1024 {
+    for iter in 0..super::CHUNKS_PER_REGION {
 
         // Multiply the iteration No by 4 bytes the get the beginning of the 4 byte entry 
         let offset = iter * 4; 
@@ -112,7 +97,7 @@ pub fn get_region_raw(file: &[u8]) -> Result<Vec<(Vec<u8>, u8)>, RegionParseErro
             // If the file length is shorter than the start posistion + rough end posistion 
             // return an error and indicate which chunk errored 
             if file.len() < entry_pos + rough_size { 
-                return Err(RegionParseError::ChunkParseErr(iter, file.len(), entry_pos + rough_size)) 
+                return Err(RegionParseError::ChunkPosErr(iter, file.len(), entry_pos + rough_size)) 
             } 
 
             // Converts the 4 bytes, largest to smallest into a single number 
@@ -122,8 +107,19 @@ pub fn get_region_raw(file: &[u8]) -> Result<Vec<(Vec<u8>, u8)>, RegionParseErro
             let first_byte = file[entry_pos + 3] as usize; 
             let size = fourth_byte + third_byte + second_byte + first_byte; 
 
-            // Slice from the first 5 bytes and the first 5 bytes + the size 
-            let raw_chunk = file[(entry_pos + 5)..(entry_pos + 5 + size)].to_vec();
+            // If the exact chunk size is greater than the rough size return an error
+            // error states (chunk index in posistion table, rough size, size indicated by the header)
+            if 4 + size > rough_size { 
+                return Err(RegionParseError::ChunkHeaderErr(iter, rough_size, 4 + size)); 
+            }
+
+            // We dont need to check if the exact size size if beyond the end of the slice as we now know that: 
+            // - The exact size is smaller than or equal to the rough size
+            // - The rough size is within the length if the slice 
+
+            // Slice from the first 5 bytes and the number of bytes indicated past that first 5 
+            // We add 4 to the end slice as the size includes the 5th byte of the header (compression scheme)
+            let raw_chunk = file[(entry_pos + 5)..=(entry_pos + 4 + size)].to_vec();
             
             // Append the slice as a tuple into the output vec 
             output.push((raw_chunk, file[entry_pos + 4]));
