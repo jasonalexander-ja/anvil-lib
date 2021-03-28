@@ -54,7 +54,7 @@ pub use unpack::*;
 /// 
 ///     `Err(RegionParseError::ChunkHeaderErr(chunk_number, max_length, indicated_length))`
 /// 
-pub fn get_region_raw(file: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, RegionParseError> {
+pub fn get_region_raw(file: &[u8]) -> Result<Vec<(Vec<u8>, usize)>, RegionParseError> {
     let schema = AnvilSchema::default();
     unpack::get_region_raw(file, schema)
 }

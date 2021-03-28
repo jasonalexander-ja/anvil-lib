@@ -2,9 +2,9 @@ mod unpack_errors;
 use super::AnvilSchema;
 
 pub use unpack_errors::*;
-pub use unpack_errors::*;
 
-pub fn get_region_raw(file: &[u8], schema: AnvilSchema) -> Result<Vec<(Vec<u8>, Vec<u8>)>, RegionParseError> {
+pub fn get_region_raw(file: &[u8], schema: AnvilSchema) -> Result<Vec<(Vec<u8>, usize)>, RegionParseError> 
+{
     if file.len() < schema.min_anvil_file_size { 
         return Err(RegionParseError::throw_file_size_err(file.len(), schema.min_anvil_file_size)) 
     }
@@ -13,23 +13,24 @@ pub fn get_region_raw(file: &[u8], schema: AnvilSchema) -> Result<Vec<(Vec<u8>, 
 }
 
 fn get_regions_from_headers(file: &[u8], headers: &[(usize, usize)], schema: &AnvilSchema) 
-    -> Result<Vec<(Vec<u8>, Vec<u8>)>, RegionParseError> 
+    -> Result<Vec<(Vec<u8>, usize)>, RegionParseError> 
 {
-    let mut output: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    let mut output: Vec<(Vec<u8>, usize)> = Vec::new();
     for (iter, (pos, size)) in headers.iter().enumerate() {
         if pos != &0 {
             let end_pos = pos + size;
             let chunk = get_chunk(&file, *pos, end_pos, iter, &schema)?;
             output.push(chunk);
         } else {
-            output.push((Vec::new(), Vec::new()));
+            output.push((Vec::new(), 0));
         }
     }
     Ok(output)
 }
 
 // Parses the first table in the file 
-fn get_posistion_table(file: &[u8], schema: &AnvilSchema) -> Result<Vec<(usize, usize)>, RegionParseError> {
+fn get_posistion_table(file: &[u8], schema: &AnvilSchema) -> Result<Vec<(usize, usize)>, RegionParseError> 
+{
     let mut output_vec: Vec<(usize, usize)> = Vec::new();
     for iter in 0..schema.chunks_per_region {
         let record = get_pos_record(file, iter, schema);
@@ -39,9 +40,12 @@ fn get_posistion_table(file: &[u8], schema: &AnvilSchema) -> Result<Vec<(usize, 
 }
 
 // Gets a record from the first table in the file
-fn get_pos_record(file: &[u8], rec_no: usize, schema: &AnvilSchema) -> (usize, usize) {
+fn get_pos_record(file: &[u8], rec_no: usize, schema: &AnvilSchema) -> (usize, usize) 
+{
     let offset = rec_no * schema.posistion_table_record_len;
-    let pos_data_slice = &file[schema.pos_table_start_bytes.start + offset..schema.pos_table_start_bytes.end + offset];
+    let pos_data_slice = &file[schema.pos_table_start_bytes.start + offset..
+        schema.pos_table_start_bytes.end + offset];
+
     let pos_data = make_num_from_bytes(pos_data_slice) * schema.pos_multiplier;
     let size_raw = &file[schema.pos_table_size_bytes.start  + offset..schema.pos_table_size_bytes.end +  offset];
     let size = make_num_from_bytes(size_raw) * schema.size_multiplier;
@@ -50,7 +54,7 @@ fn get_pos_record(file: &[u8], rec_no: usize, schema: &AnvilSchema) -> (usize, u
 
 // Finds the relavant chunk from the file 
 fn get_chunk(file: &[u8], start: usize, end: usize, chunk_index: usize, schema: &AnvilSchema) 
-        -> Result<(Vec<u8>, Vec<u8>), RegionParseError> 
+        -> Result<(Vec<u8>, usize), RegionParseError> 
 {
     if file.len() < end { // Ensures we aren't about to index ouside the Vec `file`
         return Err(RegionParseError::throw_chunk_pos_err(chunk_index, file.len(), end)) 
@@ -65,8 +69,11 @@ fn get_chunk(file: &[u8], start: usize, end: usize, chunk_index: usize, schema: 
 }
 
 // Parses the first few bytes of a chunk
-fn parse_chunk_header(chunk: &[u8], schema: &AnvilSchema) -> Result<(usize, Vec<u8>), RegionParseError> {
-    let compression = chunk[schema.chunk_header_compr_bytes.start..schema.chunk_header_compr_bytes.end].to_vec();
+fn parse_chunk_header(chunk: &[u8], schema: &AnvilSchema) -> Result<(usize, usize), RegionParseError> 
+{
+    let compression_raw = &chunk[schema.chunk_header_compr_bytes.start..schema.chunk_header_compr_bytes.end];
+    let compression = make_num_from_bytes(compression_raw);
+    
     let size_raw = &chunk[schema.chunk_header_size_bytes.start..schema.chunk_header_size_bytes.end];
     let size = make_num_from_bytes(&size_raw) + schema.chunk_starts_from;
     Ok((size, compression))
@@ -100,7 +107,7 @@ mod unit_tests {
         match parse_chunk_header(&header, &schema) {
             Ok(val) => {
                 assert_eq!(val.0, 6);
-                assert_eq!(val.1, vec![2]);
+                assert_eq!(val.1, 2);
             },
             Err(error) => panic!("{:?}", error),
         };
