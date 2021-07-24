@@ -1,14 +1,14 @@
 [package]
-name = "anvil-lib"
-version = "0.1.0"
-authors = ["jasonalexander <jay14039@gmail.com>"]
-description = "A library for serialising and deserialising Anvil File Format"
-edition = "2018"
-repository = "https://github.com/jasonalexander-ja/anvil-lib"
-licence = "0BSD"
-keywords = ["minecraft", "minecraft world", "anvil"]
+    name = "anvil-lib"
+    version = "0.1.0"
+    authors = ["jasonalexander <jay14039@gmail.com>"]
+    description = "A library for serialising and deserialising Anvil File Format"
+    edition = "2018"
+    repository = "https://github.com/jasonalexander-ja/anvil-lib"
+    licence = "0BSD"
+    keywords = ["minecraft", "minecraft world", "anvil"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-quartz_nbt = "0.1.0"
+    quartz_nbt = "0.2.0"

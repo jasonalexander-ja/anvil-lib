@@ -29,7 +29,7 @@ pub struct AnvilSchema {
 
 impl AnvilSchema {
     /// This will get the default schema for the anvil file format. 
-    /// Correct as of last build. 
+    /// Correct as of latest build. 
     /// 
     /// # Example
     /// ```
